@@ -1,88 +1,108 @@
-const OLLAMA_URL = 'http://localhost:11434';
-const MODEL_NAME = 'minimax-m2.5:cloud';
+import { AnalysisResult } from "../types";
 
-export interface OllamaResponse {
-  model: string;
-  created_at: string;
-  response: string;
-  done: boolean;
-}
+const API_URL = '/api/analyze';
+const MODEL_NAME = 'deepseek-v3.1:671b-cloud';
+
+const MAX_RETRIES = 5;
 
 export const analyzeTranscript = async (text: string, signal?: AbortSignal): Promise<AnalysisResult> => {
-  const prompt = `Ты эксперт-психолог и научный ассистент. Твоя задача — проанализировать предоставленную стенограмму интервью, используя психоаналитические и психодинамические подходы.
+  const prompt = `Ты психолог. Проанализируй текст и верни ТОЛЬКО JSON.
 
-ВАЖНО: Весь вывод должен быть строго на РУССКОМ ЯЗЫКЕ в формате JSON.
+Обязательные поля: summary (строка), language (строка), riskLevel (одно из: Low, Medium, High).
 
-Инструкции:
-1. Определи язык стенограммы (вывод на русском).
-2. Определи уровень психологического риска (Low, Medium, High).
-3. Определи защитные механизмы (по классификации Вайланта).
-4. Оцени тип привязанности (Боулби/Эйнсворт).
-5. Выяви эмоциональные триггеры и реакции.
-6. Выдели ключевые темы и паттерны.
-7. Проведи анализ эмоций по 10 сегментам (happiness, sadness, anger, anxiety - шкала 0-10).
-8. Дай рекомендации по терапии.
-9. Выбери ключевые цитаты.
-10. Создай научные заметки в Markdown.
+Дополнительные поля (могут быть пустыми массивами):
+- defenseMechanisms: массив объектов с полями name, description, frequency, exampleQuote
+- attachmentProfile: объект с полями style, confidence, indicators
+- emotionalTriggers: массив объектов с полями trigger, response, intensity
+- themes: массив объектов с полями title, description, relevanceScore
+- emotionTrend: массив объектов с полями segment, happiness, sadness, anger, anxiety
+- sentimentTrend: массив объектов с полями segment, score, label
+- therapyRecommendations: массив строк
+- keyQuotes: массив объектов с полями text, category, analysis
+- academicNotes: строка
 
-Верни ВАЛИДНЫЙ JSON с такой структурой:
-{
-  "summary": "краткое резюме",
-  "language": "язык",
-  "riskLevel": "Low|Medium|High",
-  "defenseMechanisms": [{"name": "", "description": "", "frequency": "High|Medium|Low", "exampleQuote": ""}],
-  "attachmentProfile": {"style": "", "confidence": 0-100, "indicators": []},
-  "emotionalTriggers": [{"trigger": "", "response": "", "intensity": 1-10}],
-  "themes": [{"title": "", "description": "", "relevanceScore": 0-100}],
-  "emotionTrend": [{"segment": 1-10, "happiness": 0-10, "sadness": 0-10, "anger": 0-10, "anxiety": 0-10}],
-  "therapyRecommendations": [""],
-  "keyQuotes": [{"text": "", "category": "", "analysis": ""}],
-  "academicNotes": "markdown текст"
-}
+Пример ответа:
+{"summary":"Описание","language":"Russian","riskLevel":"Low","defenseMechanisms":[],"attachmentProfile":{"style":"Secure","confidence":75,"indicators":[]},"emotionalTriggers":[],"themes":[],"emotionTrend":[],"sentimentTrend":[],"therapyRecommendations":[],"keyQuotes":[],"academicNotes":""}
 
-Стенограмма:
-${text}`;
+Текст для анализа:
+${text}
 
-  try {
-    const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: MODEL_NAME,
-        prompt: prompt,
-        stream: false,
-        format: 'json',
-      }),
-      signal,
-    });
+Верни ТОЛЬКО JSON, без пояснений.`;
 
-    if (!response.ok) {
-      throw new Error(`Ollama error: ${response.status}`);
-    }
+  let lastError: Error | null = null;
 
-    const data: OllamaResponse = await response.json();
-    const jsonText = data.response;
-
-    if (!jsonText) {
-      throw new Error("No response from AI");
-    }
-
-    // Try to parse JSON, handling potential markdown code blocks
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      // Remove markdown code block wrappers if present
-      const cleanedJson = jsonText.replace(/^```json\n?/, '').replace(/```$/, '').trim();
-      return JSON.parse(cleanedJson) as AnalysisResult;
-    } catch (parseError) {
-      console.error("Failed to parse JSON:", jsonText);
-      throw new Error("Invalid JSON response from AI");
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: MODEL_NAME,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+          format: 'json',
+          options: {
+            temperature: 0.1,
+            top_p: 0.9,
+          }
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const content = data.message?.content;
+
+      if (!content) {
+        throw new Error("No response from AI");
+      }
+
+      let jsonText = content.trim();
+      jsonText = jsonText.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/```$/, '').trim();
+
+      const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        jsonText = jsonMatch[0];
+      }
+
+      const result = JSON.parse(jsonText) as AnalysisResult;
+
+      if (!result.summary || !result.riskLevel) {
+        throw new Error("Missing required fields");
+      }
+
+      return {
+        summary: result.summary,
+        language: result.language || 'Unknown',
+        riskLevel: result.riskLevel,
+        defenseMechanisms: result.defenseMechanisms || [],
+        attachmentProfile: result.attachmentProfile || { style: 'Unknown', confidence: 0, indicators: [] },
+        emotionalTriggers: result.emotionalTriggers || [],
+        themes: result.themes || [],
+        emotionTrend: result.emotionTrend || [],
+        sentimentTrend: result.sentimentTrend || [],
+        therapyRecommendations: result.therapyRecommendations || [],
+        keyQuotes: result.keyQuotes || [],
+        academicNotes: result.academicNotes || '',
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.error(`Attempt ${attempt} failed:`, lastError.message);
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw error;
+      }
+
+      if (attempt < MAX_RETRIES) {
+        await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+      }
     }
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw error;
-    }
-    console.error("Analysis failed:", error);
-    throw error;
   }
+
+  throw lastError || new Error("Failed to analyze transcript");
 };
