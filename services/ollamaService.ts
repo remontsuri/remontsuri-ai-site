@@ -2,7 +2,7 @@ import { AnalysisResult } from "../types";
 
 // Direct Ollama API - works locally
 const OLLAMA_URL = 'http://localhost:11434';
-const MODEL = 'deepseek-v3.1:671b-cloud';
+const MODEL = 'minimax-m2.5:cloud';
 
 export const analyzeTranscript = async (text: string, signal?: AbortSignal): Promise<AnalysisResult> => {
   const prompt = `Ты психолог. Верни JSON.
