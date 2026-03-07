@@ -3,31 +3,20 @@ import { AnalysisResult } from "../types";
 const API_URL = '/api/analyze';
 const MODEL_NAME = 'deepseek-v3.1:671b-cloud';
 
-const MAX_RETRIES = 5;
+const MAX_RETRIES = 2;
 
 export const analyzeTranscript = async (text: string, signal?: AbortSignal): Promise<AnalysisResult> => {
-  const prompt = `Ты психолог. Проанализируй текст и верни ТОЛЬКО JSON.
+  const prompt = `Ты психолог. Проанализируй текст и верни JSON.
 
-Обязательные поля: summary (строка), language (строка), riskLevel (одно из: Low, Medium, High).
+Обязательные: summary, language, riskLevel (Low/Medium/High).
 
-Дополнительные поля (могут быть пустыми массивами):
-- defenseMechanisms: массив объектов с полями name, description, frequency, exampleQuote
-- attachmentProfile: объект с полями style, confidence, indicators
-- emotionalTriggers: массив объектов с полями trigger, response, intensity
-- themes: массив объектов с полями title, description, relevanceScore
-- emotionTrend: массив объектов с полями segment, happiness, sadness, anger, anxiety
-- sentimentTrend: массив объектов с полями segment, score, label
-- therapyRecommendations: массив строк
-- keyQuotes: массив объектов с полями text, category, analysis
-- academicNotes: строка
+Дополнительные: defenseMechanisms, attachmentProfile, emotionalTriggers, themes, emotionTrend, sentimentTrend, therapyRecommendations, keyQuotes, academicNotes.
 
-Пример ответа:
-{"summary":"Описание","language":"Russian","riskLevel":"Low","defenseMechanisms":[],"attachmentProfile":{"style":"Secure","confidence":75,"indicators":[]},"emotionalTriggers":[],"themes":[],"emotionTrend":[],"sentimentTrend":[],"therapyRecommendations":[],"keyQuotes":[],"academicNotes":""}
+Пример: {"summary":"текст","language":"Russian","riskLevel":"Low","defenseMechanisms":[],"attachmentProfile":{"style":"Secure","confidence":75,"indicators":[]},"emotionalTriggers":[],"themes":[],"emotionTrend":[],"sentimentTrend":[],"therapyRecommendations":[],"keyQuotes":[],"academicNotes":""}
 
-Текст для анализа:
-${text}
+Текст: ${text}
 
-Верни ТОЛЬКО JSON, без пояснений.`;
+JSON:`;
 
   let lastError: Error | null = null;
 
@@ -35,24 +24,18 @@ ${text}
     try {
       const response = await fetch(API_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: MODEL_NAME,
           messages: [{ role: 'user', content: prompt }],
           stream: false,
-          format: 'json',
-          options: {
-            temperature: 0.1,
-            top_p: 0.9,
-          }
+          options: { temperature: 0.2, num_predict: 512 }
         }),
         signal,
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama error: ${response.status}`);
+        throw new Error(`API error: ${response.status}`);
       }
 
       const data = await response.json();
@@ -66,9 +49,7 @@ ${text}
       jsonText = jsonText.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/```$/, '').trim();
 
       const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        jsonText = jsonMatch[0];
-      }
+      if (jsonMatch) jsonText = jsonMatch[0];
 
       const result = JSON.parse(jsonText) as AnalysisResult;
 
@@ -99,7 +80,7 @@ ${text}
       }
 
       if (attempt < MAX_RETRIES) {
-        await new Promise(resolve => setTimeout(resolve, 1500 * attempt));
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
   }
