@@ -9,37 +9,55 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// API proxy to Ollama Cloud
 app.use(express.json());
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const body = req.body;
+    const { messages, model } = req.body;
+    const userMessage = messages?.[messages.length - 1]?.content || '';
 
-    const response = await fetch('https://ollama.com/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: body.model || 'qwen2.5-coder:14b',
-        messages: body.messages,
-        stream: false,
-        options: { temperature: 0.2, num_predict: 2048 }
-      }),
-    });
+    // Use HuggingFace Inference API (free, no auth for this model)
+    const response = await fetch(
+      'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-14B-Instruct',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inputs: `<|im_start|>system
+Ты психолог. Верни JSON с полями: summary, language, riskLevel (Low/Medium/High), defenseMechanisms, attachmentProfile, emotionalTriggers, themes.
+Отвечай ТОЛЬКО JSON.<|im_end|>
+<|im_start|>user
+${userMessage}<|im_end|>
+<|im_start|>`,
+          parameters: {
+            max_new_tokens: 1024,
+            temperature: 0.2,
+            return_full_text: false
+          }
+        }),
+      }
+    );
 
     if (!response.ok) {
-      res.status(response.status).json({ error: `Ollama: ${response.status}` });
+      res.status(response.status).json({ error: `HF: ${response.status}` });
       return;
     }
 
     const data = await response.json();
-    res.json(data);
+    const content = Array.isArray(data) ? data[0]?.generated_text : data.generated_text;
+
+    // Try to extract JSON
+    const jsonMatch = content?.match(/\{[\s\S]*\}/);
+    const json = jsonMatch ? jsonMatch[0] : content;
+
+    res.json({
+      message: { role: 'assistant', content: json }
+    });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
-// Serve static files from Vite build
 app.use(express.static(join(__dirname, 'dist')));
 
 app.get('*', (req, res) => {
