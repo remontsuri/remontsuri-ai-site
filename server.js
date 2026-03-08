@@ -13,41 +13,42 @@ app.use(express.json());
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, model } = req.body;
+    const { messages } = req.body;
     const userMessage = messages?.[messages.length - 1]?.content || '';
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    // Use HuggingFace Inference API (free, no auth for this model)
+    if (!apiKey) {
+      res.status(500).json({ error: 'GEMINI_API_KEY not set' });
+      return;
+    }
+
     const response = await fetch(
-      'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-14B-Instruct',
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          inputs: `<|im_start|>system
-Ты психолог. Верни JSON с полями: summary, language, riskLevel (Low/Medium/High), defenseMechanisms, attachmentProfile, emotionalTriggers, themes.
-Отвечай ТОЛЬКО JSON.<|im_end|>
-<|im_start|>user
-${userMessage}<|im_end|>
-<|im_start|>`,
-          parameters: {
-            max_new_tokens: 1024,
+          contents: [{
+            parts: [{ text: `Ты психолог. Верни JSON с полями: summary, language, riskLevel (Low/Medium/High), defenseMechanisms, attachmentProfile, emotionalTriggers, themes. Отвечай ТОЛЬКО чистым JSON. Текст для анализа: ${userMessage}` }]
+          }],
+          generationConfig: {
             temperature: 0.2,
-            return_full_text: false
+            maxOutputTokens: 1024
           }
         }),
       }
     );
 
     if (!response.ok) {
-      res.status(response.status).json({ error: `HF: ${response.status}` });
+      res.status(response.status).json({ error: `Gemini: ${response.status}` });
       return;
     }
 
     const data = await response.json();
-    const content = Array.isArray(data) ? data[0]?.generated_text : data.generated_text;
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // Try to extract JSON
-    const jsonMatch = content?.match(/\{[\s\S]*\}/);
+    // Extract JSON
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
     const json = jsonMatch ? jsonMatch[0] : content;
 
     res.json({

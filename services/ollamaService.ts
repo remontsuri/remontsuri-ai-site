@@ -2,7 +2,7 @@ import { AnalysisResult } from "../types";
 
 // Always use /api (works both locally via Vite proxy and on Express server)
 const API_URL = '';
-const MODEL = 'qwen2.5-14b-instruct';
+const MODEL = 'gemini-2.0-flash';
 
 export const analyzeTranscript = async (text: string, signal?: AbortSignal): Promise<AnalysisResult> => {
   const prompt = `Ты психолог. Верни JSON.
