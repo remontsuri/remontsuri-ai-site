@@ -1,7 +1,7 @@
 import { AnalysisResult } from "../types";
 
-// Direct Ollama API - works locally
-const OLLAMA_URL = 'http://localhost:11434';
+// Use Vite proxy locally, Vercel API in production
+const API_URL = import.meta.env.PROD ? '/api' : '';
 const MODEL = 'minimax-m2.5:cloud';
 
 export const analyzeTranscript = async (text: string, signal?: AbortSignal): Promise<AnalysisResult> => {
@@ -16,14 +16,14 @@ JSON: ${text}
 Ответь ТОЛЬКО JSON.`;
 
   try {
-    const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+    const response = await fetch(`${API_URL}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: MODEL,
         messages: [{ role: 'user', content: prompt }],
         stream: false,
-        options: { temperature: 0.2, num_predict: 512 }
+        options: { temperature: 0.2, num_predict: 2048 }
       }),
       signal,
     });
