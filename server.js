@@ -20,7 +20,7 @@ app.post('/api/chat', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: body.model || 'minimax-m2.5:cloud',
+        model: body.model || 'qwen2.5-coder:14b',
         messages: body.messages,
         stream: false,
         options: { temperature: 0.2, num_predict: 2048 }

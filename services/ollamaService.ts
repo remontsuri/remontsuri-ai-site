@@ -2,7 +2,7 @@ import { AnalysisResult } from "../types";
 
 // Always use /api (works both locally via Vite proxy and on Express server)
 const API_URL = '';
-const MODEL = 'minimax-m2.5:cloud';
+const MODEL = 'qwen2.5-coder:14b';
 
 export const analyzeTranscript = async (text: string, signal?: AbortSignal): Promise<AnalysisResult> => {
   const prompt = `Ты психолог. Верни JSON.
