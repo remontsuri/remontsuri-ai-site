@@ -1,7 +1,7 @@
 import { AnalysisResult } from "../types";
 
-// Use Vite proxy locally, Vercel API in production
-const API_URL = import.meta.env.PROD ? '/api' : '';
+// Always use /api (works both locally via Vite proxy and on Express server)
+const API_URL = '';
 const MODEL = 'minimax-m2.5:cloud';
 
 export const analyzeTranscript = async (text: string, signal?: AbortSignal): Promise<AnalysisResult> => {
