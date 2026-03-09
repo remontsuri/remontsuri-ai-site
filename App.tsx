@@ -6,6 +6,13 @@ import { AnalysisResult, AnalysisStatus, HistoryItem } from './types';
 import { analyzeTranscript } from './services/ollamaService';
 import { BrainCircuit, AlertCircle, PlusCircle, Moon, Sun, Scale } from 'lucide-react';
 
+// Constants
+const MAX_SUMMARY_LENGTH = 100;
+const MAX_HISTORY_ITEMS = 20;
+const MAX_COMPARE_ITEMS = 2;
+const APP_NAME = 'PsychoAnalyze AI';
+const POWERED_BY = 'Google Gemini';
+
 const App: React.FC = () => {
   const [status, setStatus] = useState<AnalysisStatus>('idle');
   const [data, setData] = useState<AnalysisResult | null>(null);
@@ -17,6 +24,7 @@ const App: React.FC = () => {
 
   // Dark mode
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [toast, setToast] = useState<{ message: string; type: 'info' | 'error' } | null>(null);
 
   // Track current analysis ID for rating
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
@@ -53,8 +61,8 @@ const App: React.FC = () => {
     if (saved) {
       try {
         setHistory(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse history", e);
+      } {
+        // Invalid catch (e) history data in localStorage
       }
     }
   }, []);
@@ -84,11 +92,11 @@ const App: React.FC = () => {
     const newItem: HistoryItem = {
       id: Date.now().toString(),
       timestamp: Date.now(),
-      summary: result.summary.substring(0, 100) + '...',
+      summary: result.summary.substring(0, MAX_SUMMARY_LENGTH) + '...',
       data: result,
       userRating: 0
     };
-    const updated = [newItem, ...history].slice(0, 20); // Keep last 20
+    const updated = [newItem, ...history].slice(0, MAX_HISTORY_ITEMS);
     setHistory(updated);
     setCurrentAnalysisId(newItem.id);
     localStorage.setItem('psychoanalyze_history', JSON.stringify(updated));
@@ -152,8 +160,8 @@ const App: React.FC = () => {
     if (compareList.find(i => i.id === item.id)) {
       setCompareList(prev => prev.filter(i => i.id !== item.id));
     } else {
-      if (compareList.length >= 2) {
-        alert("Можно сравнивать только 2 анализа одновременно.");
+      if (compareList.length >= MAX_COMPARE_ITEMS) {
+        setToast({ message: "Можно сравнивать только 2 анализа одновременно.", type: 'info' });
         return;
       }
       setCompareList(prev => [...prev, item]);
@@ -161,12 +169,12 @@ const App: React.FC = () => {
   };
 
   const startComparison = () => {
-    if (compareList.length === 2) {
+    if (compareList.length === MAX_COMPARE_ITEMS) {
       setIsComparing(true);
       setStatus('success');
       setData(null);
     } else {
-      alert("Выберите ровно 2 анализа для сравнения.");
+      setToast({ message: "Выберите ровно 2 анализа для сравнения.", type: 'error' });
     }
   };
 
@@ -285,10 +293,33 @@ const App: React.FC = () => {
 
       </main>
 
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-bottom-4 z-50 ${
+          toast.type === 'error'
+            ? 'bg-red-500 text-white'
+            : 'bg-indigo-500 text-white'
+        }`}>
+          <div className="flex items-center gap-2">
+            <span>{toast.message}</span>
+            <button onClick={() => setToast(null)} className="ml-2 hover:opacity-80">✕</button>
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       <footer className="mt-24 border-t border-slate-200 dark:border-slate-800 py-12 text-center text-slate-400 dark:text-slate-500 text-sm transition-colors">
-        <p>&copy; {new Date().getFullYear()} PsychoAnalyze AI. Powered by Google Gemini.</p>
+        <p>&copy; {new Date().getFullYear()} PsychoAnalyze AI. Powered by {import.meta.env.VITE_AI_PROVIDER || 'Google Gemini'}.</p>
       </footer>
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg shadow-lg z-50 animate-in slide-in-from-bottom-2 ${
+          toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'
+        }`}>
+          <p className="text-sm font-medium">{toast.message}</p>
+        </div>
+      )}
 
     </div>
   );
