@@ -1,6 +1,8 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { Upload, FileText, X, Globe, History, Clock, ArrowRight, Search, CheckCircle } from 'lucide-react';
+import { Upload, FileText, X, Globe, History, Clock, ArrowRight, Search, CheckCircle, Trash2, Plus } from 'lucide-react';
 import { HistoryItem } from '../types';
+
+type SortOption = 'date-desc' | 'date-asc' | 'rating' | 'risk';
 
 interface InputSectionProps {
   onAnalyze: (text: string) => void;
@@ -9,29 +11,76 @@ interface InputSectionProps {
   onLoadHistory: (item: HistoryItem) => void;
   onSelectForCompare: (item: HistoryItem) => void;
   compareList: HistoryItem[];
+  onDeleteHistory?: (id: string) => void;
+  onUpdateHistoryTags?: (id: string, tags: string[]) => void;
 }
 
-const InputSection: React.FC<InputSectionProps> = ({ 
-  onAnalyze, 
-  isLoading, 
-  history, 
+const sortOptions: { value: SortOption; label: string }[] = [
+  { value: 'date-desc', label: 'По дате ↓' },
+  { value: 'date-asc', label: 'По дате ↑' },
+  { value: 'rating', label: 'По рейтингу' },
+  { value: 'risk', label: 'По риску' },
+];
+
+const riskOrder = { Low: 0, Medium: 1, High: 2 };
+
+const InputSection: React.FC<InputSectionProps> = ({
+  onAnalyze,
+  isLoading,
+  history,
   onLoadHistory,
   onSelectForCompare,
-  compareList
+  compareList,
+  onDeleteHistory,
+  onUpdateHistoryTags,
 }) => {
   const [text, setText] = useState('');
   const [fileName, setFileName] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState<SortOption>('date-desc');
+  const [validationError, setValidationError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+  const MAX_TEXT_LENGTH = 50000;
+  const MIN_TEXT_LENGTH = 50;
+  const ALLOWED_FILE_TYPES = ['.txt', '.md', '.csv'];
+
+  // Validation
+  const textLength = text.trim().length;
+  const isTextTooShort = textLength > 0 && textLength < MIN_TEXT_LENGTH;
+  const isTextTooLong = textLength > MAX_TEXT_LENGTH;
+  const canSubmit = text.trim().length >= MIN_TEXT_LENGTH && !isTextTooLong && !isLoading;
+
+  const validateText = (value: string): string | null => {
+    if (value.trim().length === 0) return null;
+    if (value.trim().length < MIN_TEXT_LENGTH) return `Минимум ${MIN_TEXT_LENGTH} символов для анализа`;
+    if (value.length > MAX_TEXT_LENGTH) return `Максимум ${MAX_TEXT_LENGTH} символов`;
+    return null;
+  };
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setText(value);
+    setValidationError(validateText(value));
+  };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       // Validate file size
       if (file.size > MAX_FILE_SIZE) {
-        alert('Файл слишком большой. Максимальный размер: 2MB');
+        setValidationError('Файл слишком большой. Максимум 2MB');
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+        return;
+      }
+
+      // Validate file type
+      const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+      if (!ALLOWED_FILE_TYPES.includes(fileExtension)) {
+        setValidationError('Неподдерживаемый тип файла. Разрешены: .txt, .md, .csv');
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
         }
@@ -43,9 +92,10 @@ const InputSection: React.FC<InputSectionProps> = ({
       reader.onload = (e) => {
         const content = e.target?.result as string;
         setText(content);
+        setValidationError(validateText(content));
       };
       reader.onerror = () => {
-        alert('Ошибка при чтении файла. Попробуйте другой файл.');
+        setValidationError('Ошибка чтения файла');
         setFileName(null);
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
@@ -63,13 +113,35 @@ const InputSection: React.FC<InputSectionProps> = ({
     }
   };
 
-  const filteredHistory = useMemo(() =>
-    history.filter(item =>
-      item.summary.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.data.language.toLowerCase().includes(searchTerm.toLowerCase())
-    ),
-    [history, searchTerm]
-  );
+  const filteredAndSortedHistory = useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
+    const filtered = term
+      ? history.filter(
+          item =>
+            item.summary.toLowerCase().includes(term) ||
+            (item.data.language?.toLowerCase() ?? '').includes(term) ||
+            item.data.themes?.some(t => (t.title ?? '').toLowerCase().includes(term)) ||
+            (item.data.riskLevel?.toLowerCase() ?? '').includes(term) ||
+            (item.tags ?? []).some(t => t.toLowerCase().includes(term))
+        )
+      : history;
+
+    const sorted = [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'date-desc':
+          return b.timestamp - a.timestamp;
+        case 'date-asc':
+          return a.timestamp - b.timestamp;
+        case 'rating':
+          return (b.userRating ?? 0) - (a.userRating ?? 0);
+        case 'risk':
+          return (riskOrder[b.data.riskLevel as keyof typeof riskOrder] ?? 0) - (riskOrder[a.data.riskLevel as keyof typeof riskOrder] ?? 0);
+        default:
+          return 0;
+      }
+    });
+    return sorted;
+  }, [history, searchTerm, sortBy]);
 
   return (
     <div className="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-4 gap-8">
@@ -160,26 +232,37 @@ const InputSection: React.FC<InputSectionProps> = ({
              )}
           </div>
           
-          <div className="relative mb-3">
+          <div className="relative mb-2">
              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
              <input 
                type="text" 
-               placeholder="Поиск..." 
+               placeholder="Поиск (темы, теги, риск)..." 
                value={searchTerm}
                onChange={(e) => setSearchTerm(e.target.value)}
                className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
              />
           </div>
 
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortOption)}
+            className="mb-3 w-full py-2 px-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none"
+          >
+            {sortOptions.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+
           <div className="flex-1 overflow-y-auto pr-1 space-y-3 custom-scrollbar">
-            {filteredHistory.length === 0 ? (
+            {filteredAndSortedHistory.length === 0 ? (
               <div className="text-center py-10 text-slate-400 dark:text-slate-600 text-sm">
                 <Clock className="w-8 h-8 mx-auto mb-2 opacity-20" />
                 {history.length === 0 ? 'Нет анализов' : 'Ничего не найдено'}
               </div>
             ) : (
-              filteredHistory.map((item) => {
+              filteredAndSortedHistory.map((item) => {
                 const isSelectedForCompare = compareList.some(c => c.id === item.id);
+                const tags = item.tags ?? [];
                 return (
                   <div key={item.id} className="relative group">
                     <button
@@ -190,13 +273,54 @@ const InputSection: React.FC<InputSectionProps> = ({
                         <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full">
                           {item.data.language}
                         </span>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                          {new Date(item.timestamp).toLocaleDateString()}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          {onDeleteHistory && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm('Удалить этот анализ?')) onDeleteHistory(item.id);
+                              }}
+                              className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-500"
+                              title="Удалить"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                            {new Date(item.timestamp).toLocaleDateString()}
+                          </span>
+                        </div>
                       </div>
                       <p className="text-sm font-medium text-slate-700 dark:text-slate-300 line-clamp-2 group-hover:text-indigo-700 dark:group-hover:text-indigo-400 transition-colors">
                         {item.summary}
                       </p>
+                      {onUpdateHistoryTags && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {tags.map(tag => (
+                            <span
+                              key={tag}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onUpdateHistoryTags(item.id, tags.filter(t => t !== tag));
+                              }}
+                              className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300 hover:line-through cursor-pointer"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const newTag = window.prompt('Новый тег');
+                              if (newTag?.trim()) onUpdateHistoryTags(item.id, [...tags, newTag.trim()]);
+                            }}
+                            className="text-[10px] px-2 py-0.5 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-slate-500 hover:text-indigo-500 hover:border-indigo-400"
+                            title="Добавить тег"
+                          >
+                            <Plus className="w-3 h-3 inline" />
+                          </button>
+                        </div>
+                      )}
                     </button>
                     <button 
                       onClick={(e) => {

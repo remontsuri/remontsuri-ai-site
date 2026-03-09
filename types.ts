@@ -64,6 +64,7 @@ export interface HistoryItem {
   summary: string;
   data: AnalysisResult;
   userRating?: number; // 1-10
+  tags?: string[];
 }
 
 export type AnalysisStatus = 'idle' | 'loading' | 'success' | 'error';

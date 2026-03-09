@@ -25,8 +25,20 @@ const ComparisonView: React.FC<ComparisonViewProps> = ({ items, onBack }) => {
   const d2 = item2.data;
 
   // Prepare Chart Data (Comparing average emotions)
-  const calcAvg = (data: any[], key: string) => 
-    data.reduce((sum, curr) => sum + curr[key], 0) / (data.length || 1);
+  const calcAvg = (data: any[], key: string) => {
+    if (!Array.isArray(data) || data.length === 0) return 0;
+    
+    const validData = data.filter(item => 
+      item && 
+      typeof item[key] === 'number' && 
+      !isNaN(item[key])
+    );
+    
+    if (validData.length === 0) return 0;
+    
+    const sum = validData.reduce((sum, curr) => sum + curr[key], 0);
+    return sum / validData.length;
+  };
 
   const emotionData = [
     { name: 'Счастье', A: calcAvg(d1.emotionTrend, 'happiness'), B: calcAvg(d2.emotionTrend, 'happiness') },

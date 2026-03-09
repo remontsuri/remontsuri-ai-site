@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import InputSection from './components/InputSection';
-import Dashboard from './components/Dashboard';
-import ComparisonView from './components/ComparisonView';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import { AnalysisResult, AnalysisStatus, HistoryItem } from './types';
 import { analyzeTranscript } from './services/ollamaService';
-import { BrainCircuit, AlertCircle, PlusCircle, Moon, Sun, Scale } from 'lucide-react';
+import { BrainCircuit, AlertCircle, PlusCircle, Moon, Sun, Loader2 } from 'lucide-react';
+
+// Lazy load components for code splitting
+const InputSection = lazy(() => import('./components/InputSection'));
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const ComparisonView = lazy(() => import('./components/ComparisonView'));
 
 // Constants
 const MAX_SUMMARY_LENGTH = 100;
-const MAX_HISTORY_ITEMS = 20;
+const MAX_HISTORY_ITEMS = 100;
+const MAX_HISTORY_BYTES = 4 * 1024 * 1024; // 4MB
 const MAX_COMPARE_ITEMS = 2;
 const APP_NAME = 'PsychoAnalyze AI';
 const POWERED_BY = 'Google Gemini';
@@ -25,6 +28,7 @@ const App: React.FC = () => {
   // Dark mode
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [toast, setToast] = useState<{ message: string; type: 'info' | 'error' } | null>(null);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Track current analysis ID for rating
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
@@ -60,11 +64,21 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('psychoanalyze_history');
     if (saved) {
       try {
-        setHistory(JSON.parse(saved));
-      } {
-        // Invalid catch (e) history data in localStorage
+        const parsed = JSON.parse(saved) as HistoryItem[];
+        setHistory(Array.isArray(parsed) ? parsed.map(item => ({
+          ...item,
+          tags: item.tags ?? [],
+        })) : []);
+      } catch {
+        setHistory([]);
       }
     }
+  }, []);
+
+  const showToast = useCallback((message: string, type: 'info' | 'error') => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToast({ message, type });
+    toastTimeoutRef.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
   // Simulated progress bar logic
@@ -94,13 +108,52 @@ const App: React.FC = () => {
       timestamp: Date.now(),
       summary: result.summary.substring(0, MAX_SUMMARY_LENGTH) + '...',
       data: result,
-      userRating: 0
+      userRating: 0,
+      tags: [],
     };
-    const updated = [newItem, ...history].slice(0, MAX_HISTORY_ITEMS);
+    let updated = [newItem, ...history].slice(0, MAX_HISTORY_ITEMS);
+    let serialized = JSON.stringify(updated);
+    if (serialized.length > MAX_HISTORY_BYTES) {
+      updated = updated.slice(0, 80);
+      serialized = JSON.stringify(updated);
+    }
     setHistory(updated);
     setCurrentAnalysisId(newItem.id);
-    localStorage.setItem('psychoanalyze_history', JSON.stringify(updated));
+    try {
+      localStorage.setItem('psychoanalyze_history', serialized);
+    } catch {
+      showToast('Не удалось сохранить историю', 'error');
+    }
   };
+
+  const handleDeleteHistory = useCallback((id: string) => {
+    const updated = history.filter(item => item.id !== id);
+    setHistory(updated);
+    if (currentAnalysisId === id) {
+      setCurrentAnalysisId(null);
+      setData(null);
+      setStatus('idle');
+    } else {
+      setCurrentAnalysisId(prev => prev === id ? null : prev);
+    }
+    try {
+      localStorage.setItem('psychoanalyze_history', JSON.stringify(updated));
+    } catch {
+      showToast('Не удалось сохранить историю', 'error');
+    }
+  }, [history, currentAnalysisId, showToast]);
+
+  const handleUpdateHistoryTags = useCallback((id: string, tags: string[]) => {
+    const updated = history.map(item =>
+      item.id === id ? { ...item, tags } : item
+    );
+    setHistory(updated);
+    try {
+      localStorage.setItem('psychoanalyze_history', JSON.stringify(updated));
+    } catch {
+      showToast('Не удалось сохранить историю', 'error');
+    }
+  }, [history, showToast]);
 
   const handleUpdateRating = (rating: number) => {
     if (!currentAnalysisId) return;
@@ -134,7 +187,26 @@ const App: React.FC = () => {
       if (err instanceof Error && err.name === 'AbortError') {
         return; // Request was cancelled
       }
-      setError('Не удалось проанализировать стенограмму. Пожалуйста, проверьте длину текста и попробуйте снова.');
+
+      // Generate more specific error messages
+      let errorMessage = 'Не удалось проанализировать стенограмму. Пожалуйста, проверьте длину текста и попробуйте снова.';
+
+      if (err instanceof Error) {
+        const errorText = err.message.toLowerCase();
+
+        if (errorText.includes('network') || errorText.includes('fetch') || errorText.includes('connection')) {
+          errorMessage = 'Ошибка сети. Проверьте подключение к интернету и попробуйте снова.';
+        } else if (errorText.includes('ollama') || errorText.includes('модель')) {
+          errorMessage = 'AI сервис временно недоступен. Попробуйте позже.';
+        } else if (errorText.includes('timeout') || errorText.includes('время')) {
+          errorMessage = 'Превышено время ожидания. Попробуйте сократить текст.';
+        } else if (err.message) {
+          // Show the specific error message from the service
+          errorMessage = err.message;
+        }
+      }
+
+      setError(errorMessage);
       setStatus('error');
     }
   };
@@ -144,6 +216,10 @@ const App: React.FC = () => {
     return () => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
+      }
+      // Clear toast timeout if it exists
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
       }
     };
   }, []);
@@ -161,7 +237,15 @@ const App: React.FC = () => {
       setCompareList(prev => prev.filter(i => i.id !== item.id));
     } else {
       if (compareList.length >= MAX_COMPARE_ITEMS) {
+        // Clear any existing timeout
+        if (toastTimeoutRef.current) {
+          clearTimeout(toastTimeoutRef.current);
+        }
         setToast({ message: "Можно сравнивать только 2 анализа одновременно.", type: 'info' });
+        // Auto-hide toast after 3 seconds
+        toastTimeoutRef.current = setTimeout(() => {
+          setToast(null);
+        }, 3000);
         return;
       }
       setCompareList(prev => [...prev, item]);
@@ -174,7 +258,15 @@ const App: React.FC = () => {
       setStatus('success');
       setData(null);
     } else {
+      // Clear any existing timeout
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
       setToast({ message: "Выберите ровно 2 анализа для сравнения.", type: 'error' });
+      // Auto-hide toast after 3 seconds
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast(null);
+      }, 3000);
     }
   };
 
@@ -206,7 +298,7 @@ const App: React.FC = () => {
             className="flex items-center gap-3 cursor-pointer group" 
             onClick={resetAnalysis}
           >
-            <div className="bg-gradient-to-tr from-indigo-600 to-violet-600 p-2 rounded-lg shadow-lg shadow-indigo-200 dark:shadow-none group-hover:scale-105 transition-transform">
+            <div className="bg-linear-to-tr from-indigo-600 to-violet-600 p-2 rounded-lg shadow-lg shadow-indigo-200 dark:shadow-none group-hover:scale-105 transition-transform">
               <BrainCircuit className="w-6 h-6 text-white" />
             </div>
             <div>
@@ -259,14 +351,18 @@ const App: React.FC = () => {
         )}
 
         {(status === 'idle' || status === 'loading' || status === 'error') && !isComparing && (
-           <InputSection 
-             onAnalyze={handleAnalyze} 
-             isLoading={status === 'loading'} 
-             history={history}
-             onLoadHistory={handleLoadHistory}
-             onSelectForCompare={toggleCompare}
-             compareList={compareList}
-           />
+           <Suspense fallback={<div className="flex items-center justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-indigo-600" /></div>}>
+             <InputSection
+               onAnalyze={handleAnalyze}
+               isLoading={status === 'loading'}
+               history={history}
+               onLoadHistory={handleLoadHistory}
+               onSelectForCompare={toggleCompare}
+               compareList={compareList}
+               onDeleteHistory={handleDeleteHistory}
+               onUpdateHistoryTags={handleUpdateHistoryTags}
+             />
+           </Suspense>
         )}
 
         {status === 'error' && (
@@ -278,16 +374,20 @@ const App: React.FC = () => {
 
         {status === 'success' && data && !isComparing && (
           <div className="mt-8">
-            <Dashboard 
-              data={data} 
-              onRate={handleUpdateRating}
-            />
+            <Suspense fallback={<div className="flex items-center justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-indigo-600" /></div>}>
+              <Dashboard
+                data={data}
+                onRate={handleUpdateRating}
+              />
+            </Suspense>
           </div>
         )}
 
         {isComparing && (
           <div className="mt-8">
-            <ComparisonView items={compareList} onBack={() => setIsComparing(false)} />
+            <Suspense fallback={<div className="flex items-center justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-indigo-600" /></div>}>
+              <ComparisonView items={compareList} onBack={() => setIsComparing(false)} />
+            </Suspense>
           </div>
         )}
 
